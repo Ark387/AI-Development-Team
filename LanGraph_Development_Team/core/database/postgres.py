@@ -20,3 +20,13 @@ class Run(SQLModel, table=True):
     attempts: int
     files: dict = Field(sa_column=Column(JSONB, nullable=False))
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+@cache  # connects on first use, so the offline tests never need a database
+def engine():
+    url = os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://", 1)
+    e = create_engine(url)
+    SQLModel.metadata.create_all(e)  # creates the runs table if it doesn't exist
+    return e
+
+
