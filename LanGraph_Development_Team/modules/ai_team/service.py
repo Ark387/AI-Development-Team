@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 
 from core.database.postgres import Run, engine
-from modules.ai_agent.graph import build_team
+from modules.ai_team.graph import build_team
 
 
 _team = None
@@ -56,32 +56,55 @@ def to_response(run):
    }
 
 
-
-
 def chat(message, parent_id=None):
-   messages, files = [], {}
-   if parent_id:
-       with Session(engine()) as session:
-           parent = session.get(Run, parent_id)
-           if parent is None:
-               raise HTTPException(404, "Parent run not found.")
-           files = dict(parent.files)   # a copy: the parent's snapshot never changes
-           messages = [("user", parent.message), ("assistant", parent.answer)]
-   messages.append(("user", message))
+    messages, files = [], {}
+    if parent_id:
+        with Session(engine()) as session:
+            parent = session.get(Run, parent_id)
+            if parent is None:
+                raise HTTPException(404, "Parent run not found.")
+            files = dict(parent.files)   # a copy: the parent's snapshot never changes
+            messages = [("user", parent.message), ("assistant", parent.answer)]
+    messages.append(("user", message))
+
+    config = {"configurable": {"files": files}, "recursion_limit": 60}
+    result = get_team().invoke({"messages": messages}, config)   # no session open during the slow AI call
+
+    with Session(engine()) as session:
+        run = Run(parent_id=parent_id, message=message,
+                  answer=result["messages"][-1].content, files=files,
+                  **summarize(result["messages"]))
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return to_response(run)
 
 
-   config = {"configurable": {"files": files}, "recursion_limit": 60}
-   result = get_team().invoke({"messages": messages}, config)   # no session open during the slow AI call
+
+# def chat(message, parent_id=None):
+#    messages, files = [], {}
+# #    if parent_id:
+# #        with Session(engine()) as session:
+# #            parent = session.get(Run, parent_id)
+# #            if parent is None:
+# #                raise HTTPException(404, "Parent run not found.")
+# #            files = dict(parent.files)   # a copy: the parent's snapshot never changes
+# #            messages = [("user", parent.message), ("assistant", parent.answer)]
+# #    messages.append(("user", message))
 
 
-   with Session(engine()) as session:
-       run = Run(parent_id=parent_id, message=message,
-                 answer=result["messages"][-1].content, files=files,
-                 **summarize(result["messages"]))
-       session.add(run)
-       session.commit()
-       session.refresh(run)
-       return to_response(run)
+#    config = {"configurable": {"files": files}, "recursion_limit": 60}
+#    result = get_team().invoke({"messages": messages}, config)   # no session open during the slow AI call
+
+
+#    with Session(engine()) as session:
+#        run = Run(parent_id=parent_id, message=message,
+#                  answer=result["messages"][-1].content, files=files,
+#                  **summarize(result["messages"]))
+#        session.add(run)
+#        session.commit()
+#        session.refresh(run)
+#        return to_response(run)
 
 
 
