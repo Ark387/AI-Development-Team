@@ -9,7 +9,9 @@ from sqlmodel import Session
 
 from core.database.postgres import Run, engine
 from modules.ai_team.graph import build_team
+from langfuse.langchain import CallbackHandler
 
+from core.mcp import load_mcp_tools
 
 _team = None
 log = logging.getLogger(__name__)
@@ -17,10 +19,16 @@ log = logging.getLogger(__name__)
 
 
 
-def get_team():
+async def get_team():
    global _team   # built on the first request, so the server can start without a model key
    if _team is None:
-       _team = build_team()
+        try:
+           doc_tools = await load_mcp_tools()
+        except:
+            log.warning("\n ***Unable to load tools... ***\n")
+            doc_tools = []
+           
+        _team = build_team()
    return _team
 
 
@@ -77,7 +85,7 @@ def prepare(message, parent_id=None):
 
 
    messages.append(("user", message))
-   config = {"configurable": {"files": files}, "recursion_limit": 60}
+   config = {"configurable": {"files": files}, "recursion_limit": 60, "callbacks":[CallbackHandler()], "run-name": "ai-development-team-agent"}
    return messages, files, config
 
 
