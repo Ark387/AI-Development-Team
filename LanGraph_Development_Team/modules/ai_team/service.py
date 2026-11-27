@@ -23,12 +23,12 @@ async def get_team():
    global _team   # built on the first request, so the server can start without a model key
    if _team is None:
         try:
-           doc_tools = await load_mcp_tools()
-        except:
+           docs_tools = await load_mcp_tools()
+        except Exception:
             log.warning("\n ***Unable to load tools... ***\n")
-            doc_tools = []
+            docs_tools = []
            
-        _team = build_team()
+        _team = build_team(docs_tools=docs_tools)
    return _team
 
 
@@ -85,7 +85,7 @@ def prepare(message, parent_id=None):
 
 
    messages.append(("user", message))
-   config = {"configurable": {"files": files}, "recursion_limit": 60, "callbacks":[CallbackHandler()], "run-name": "ai-development-team-agent"}
+   config = {"configurable": {"files": files}, "recursion_limit": 60, "callbacks":[CallbackHandler()], "run-name": "ai_development_team_agent"}
    return messages, files, config
 
 
@@ -104,9 +104,10 @@ def save(message, parent_id, files, result):
 
 
 
-def chat(message, parent_id=None):
+async def chat(message, parent_id=None):
    messages, files, config = prepare(message, parent_id)
-   result = get_team().invoke({"messages": messages}, config)   # no session open during the slow AI call
+   team = await get_team ()
+   result = await team.invoke({"messages": messages}, config)   # no session open during the slow AI call
    return save(message, parent_id, files, result)
 
 
@@ -134,27 +135,27 @@ def progress(ns, task):
 
 
 def chat_stream(message, parent_id=None):
-   # runs before the response starts, so a missing parent is still a real 404
-   messages, files, config = prepare(message, parent_id)
+    # runs before the response starts, so a missing parent is still a real 404
+    messages, files, config = prepare(message, parent_id)
 
+    async def events():
+        try:
+            result = None
+            team = await get_team()
+            async for ns, mode, data in team.astream(   # MCP tools are async-only
+                    {"messages": messages}, config,
+                    stream_mode=["tasks", "values"], subgraphs=True):
+                if mode == "tasks":
+                    for event in progress(ns, data):   # no "yield from" in async functions
+                        yield event
+                elif not ns:
+                    result = data   # final top-level state
+            yield {"type": "done", "run": save(message, parent_id, files, result)}
+        except Exception:   # the 200 status is already sent, so report failure as an event
+            log.exception("Streaming run failed")
+            yield {"type": "error", "error": "The team couldn\u2019t finish this run. Check the FastAPI logs."}
 
-   def events():
-       try:
-           result = None
-           for ns, mode, data in get_team().stream(
-                   {"messages": messages}, config,
-                   stream_mode=["tasks", "values"], subgraphs=True):
-               if mode == "tasks":
-                   yield from progress(ns, data)
-               elif not ns:
-                   result = data   # final top-level state
-           yield {"type": "done", "run": save(message, parent_id, files, result)}
-       except Exception:   # the 200 status is already sent, so report failure as an event
-           log.exception("Streaming run failed")
-           yield {"type": "error", "error": "The team couldn\u2019t finish this run. Check the FastAPI logs."}
-
-
-   return events()
+    return events()
 
 
 
